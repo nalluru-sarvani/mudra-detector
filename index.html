@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mudra Detector — Kuchipudi</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <style>
+    :root { --gold:#c9a84c; --gold-light:#f0d080; --deep:#0d0a05; --maroon:#6b1a1a; --cream:#f5ead8; --text:#e8d5b0; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:var(--deep); color:var(--text); font-family:'Crimson Text',serif; min-height:100vh; overflow-x:hidden; }
+    body::before { content:''; position:fixed; inset:0; background:radial-gradient(ellipse at 20% 20%,rgba(201,168,76,0.08) 0%,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(107,26,26,0.15) 0%,transparent 50%); pointer-events:none; z-index:0; }
+    header { text-align:center; padding:2rem 1rem 1rem; position:relative; z-index:1; border-bottom:1px solid rgba(201,168,76,0.3); }
+    header .sanskrit { font-family:'Cinzel',serif; font-size:clamp(0.7rem,2vw,0.9rem); letter-spacing:0.3em; color:var(--gold); opacity:0.8; margin-bottom:0.3rem; }
+    header h1 { font-family:'Cinzel',serif; font-size:clamp(1.8rem,5vw,3rem); font-weight:900; color:var(--gold-light); text-shadow:0 0 40px rgba(201,168,76,0.4); }
+    header p { font-size:1rem; color:var(--text); opacity:0.7; margin-top:0.3rem; font-style:italic; }
+    .main { display:grid; grid-template-columns:1fr 340px; gap:1.5rem; max-width:1100px; margin:1.5rem auto; padding:0 1rem; position:relative; z-index:1; }
+    @media(max-width:768px){ .main{ grid-template-columns:1fr; } }
+    .camera-section { display:flex; flex-direction:column; gap:1rem; }
+    .video-wrapper { position:relative; border-radius:12px; overflow:hidden; border:2px solid rgba(201,168,76,0.4); background:#000; aspect-ratio:4/3; }
+    #videoElement { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
+    #outputCanvas { position:absolute; top:0; left:0; width:100%; height:100%; transform:scaleX(-1); }
+    .mudra-overlay { position:absolute; bottom:0; left:0; right:0; background:linear-gradient(transparent,rgba(0,0,0,0.88)); padding:1.5rem 1rem 1rem; text-align:center; }
+    .mudra-name { font-family:'Cinzel',serif; font-size:clamp(1.4rem,4vw,2rem); font-weight:700; color:var(--gold-light); text-shadow:0 0 20px rgba(240,208,128,0.6); min-height:2.5rem; }
+    .mudra-meaning { font-size:0.95rem; color:var(--cream); opacity:0.85; font-style:italic; margin-top:0.2rem; }
+    .mudra-desc-overlay { font-size:0.76rem; color:var(--cream); opacity:0.8; margin-top:0.3rem; line-height:1.4; max-width:520px; margin-left:auto; margin-right:auto; display:none; }
+    .confidence-bar-wrap { margin-top:0.5rem; background:rgba(255,255,255,0.1); border-radius:20px; height:6px; overflow:hidden; }
+    .confidence-bar { height:100%; background:linear-gradient(90deg,var(--maroon),var(--gold)); border-radius:20px; width:0%; transition:width 0.4s ease; }
+    #startBtn { display:block; margin:0 auto; padding:0.75rem 2.5rem; background:linear-gradient(135deg,var(--maroon),#8b2020); color:var(--gold-light); font-family:'Cinzel',serif; font-size:1rem; font-weight:700; letter-spacing:0.1em; border:1px solid var(--gold); border-radius:4px; cursor:pointer; transition:all 0.3s ease; box-shadow:0 4px 20px rgba(107,26,26,0.5); }
+    #startBtn:hover { box-shadow:0 4px 30px rgba(201,168,76,0.3); transform:translateY(-1px); }
+    #startBtn:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+    .status-msg { text-align:center; font-size:0.85rem; color:var(--gold); opacity:0.8; font-style:italic; }
+    .score-box { display:flex; gap:1rem; justify-content:center; }
+    .score-card { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:8px; padding:0.6rem 1.2rem; text-align:center; flex:1; }
+    .score-card .num { font-family:'Cinzel',serif; font-size:1.6rem; font-weight:700; color:var(--gold-light); }
+    .score-card .label { font-size:0.75rem; color:var(--text); opacity:0.7; letter-spacing:0.05em; text-transform:uppercase; }
+    .sidebar { display:flex; flex-direction:column; gap:1rem; }
+    .panel { background:rgba(201,168,76,0.05); border:1px solid rgba(201,168,76,0.2); border-radius:10px; padding:1rem; }
+    .panel-title { font-family:'Cinzel',serif; font-size:0.85rem; letter-spacing:0.15em; color:var(--gold); text-transform:uppercase; margin-bottom:0.8rem; padding-bottom:0.5rem; border-bottom:1px solid rgba(201,168,76,0.2); }
+    .quiz-target { text-align:center; padding:0.5rem; }
+    .quiz-target .q-label { font-size:0.8rem; color:var(--text); opacity:0.6; text-transform:uppercase; letter-spacing:0.1em; }
+    .quiz-target .q-mudra { font-family:'Cinzel',serif; font-size:1.5rem; font-weight:700; color:var(--gold-light); margin:0.3rem 0; }
+    .quiz-target .q-meaning { font-size:0.9rem; font-style:italic; color:var(--cream); opacity:0.8; }
+    .quiz-result { text-align:center; font-size:1.5rem; min-height:2rem; margin-top:0.5rem; }
+    #nextBtn { display:block; width:100%; margin-top:0.7rem; padding:0.5rem; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); color:var(--gold-light); font-family:'Cinzel',serif; font-size:0.85rem; letter-spacing:0.1em; border-radius:4px; cursor:pointer; transition:all 0.2s; }
+    #nextBtn:hover { background:rgba(201,168,76,0.25); }
+    .mudra-list { display:flex; flex-direction:column; gap:0.4rem; max-height:320px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--gold) transparent; }
+    .mudra-item { display:flex; align-items:center; gap:0.6rem; padding:0.4rem 0.6rem; border-radius:6px; transition:background 0.2s; cursor:pointer; }
+    .mudra-item:hover { background:rgba(201,168,76,0.1); }
+    .mudra-item.detected { background:rgba(201,168,76,0.15); }
+    .mudra-dot { width:8px; height:8px; border-radius:50%; background:rgba(201,168,76,0.3); flex-shrink:0; transition:background 0.3s; }
+    .mudra-item.detected .mudra-dot { background:var(--gold); box-shadow:0 0 8px var(--gold); }
+    .mudra-item-name { font-family:'Cinzel',serif; font-size:0.8rem; color:var(--cream); flex:1; }
+    .mudra-item-meaning { font-size:0.75rem; color:var(--text); opacity:0.6; font-style:italic; }
+    .mudra-desc-box { display:none; margin-top:0.8rem; padding:0.8rem; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:8px; }
+    .mudra-desc-box .desc-name { font-family:'Cinzel',serif; font-size:0.95rem; color:var(--gold-light); margin-bottom:0.2rem; }
+    .mudra-desc-box .desc-meaning { font-size:0.8rem; color:var(--gold); font-style:italic; margin-bottom:0.4rem; }
+    .mudra-desc-box .desc-text { font-size:0.82rem; color:var(--cream); line-height:1.55; opacity:0.9; }
+    .history-list { display:flex; flex-direction:column; gap:0.3rem; max-height:120px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--gold) transparent; }
+    .history-item { display:flex; justify-content:space-between; align-items:center; font-size:0.82rem; padding:0.25rem 0.4rem; border-radius:4px; background:rgba(255,255,255,0.03); }
+    .history-item span:first-child { color:var(--gold-light); font-family:'Cinzel',serif; font-size:0.78rem; }
+    .history-item span:last-child { color:var(--text); opacity:0.5; font-size:0.72rem; }
+    #screenshotBtn { display:block; width:100%; padding:0.5rem; background:rgba(107,26,26,0.3); border:1px solid rgba(107,26,26,0.6); color:var(--cream); font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.08em; border-radius:4px; cursor:pointer; transition:all 0.2s; margin-top:0.5rem; }
+    #screenshotBtn:hover { background:rgba(107,26,26,0.5); }
+    footer { text-align:center; padding:1.5rem; font-size:0.8rem; color:var(--text); opacity:0.4; position:relative; z-index:1; }
+    @keyframes flash { 0%{text-shadow:0 0 20px rgba(240,208,128,0.6);} 50%{text-shadow:0 0 60px rgba(240,208,128,1),0 0 100px rgba(201,168,76,0.8);} 100%{text-shadow:0 0 20px rgba(240,208,128,0.6);} }
+    .detected-flash { animation:flash 0.5s ease; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="sanskrit">కూచిపూడి ముద్రలు</div>
+  <h1>Mudra Detector</h1>
+  <p>Kuchipudi Hand Gesture Recognition — 28 Asamyuta Hastas</p>
+</header>
+<div class="main">
+  <div class="camera-section">
+    <div class="video-wrapper">
+      <video id="videoElement" playsinline></video>
+      <canvas id="outputCanvas"></canvas>
+      <div class="mudra-overlay">
+        <div class="mudra-name" id="mudraName">Waiting...</div>
+        <div class="mudra-meaning" id="mudraMeaning">Show your hand to the camera</div>
+        <div class="mudra-desc-overlay" id="mudraDescOverlay"></div>
+        <div class="confidence-bar-wrap"><div class="confidence-bar" id="confidenceBar"></div></div>
+      </div>
+    </div>
+    <button id="startBtn">▶ Start Camera</button>
+    <div class="status-msg" id="statusMsg">Click Start Camera to begin</div>
+    <div class="score-box">
+      <div class="score-card"><div class="num" id="totalDetected">0</div><div class="label">Detected</div></div>
+      <div class="score-card"><div class="num" id="quizScore">0</div><div class="label">Quiz Score</div></div>
+      <div class="score-card"><div class="num" id="uniqueCount">0</div><div class="label">Unique</div></div>
+    </div>
+    <button id="screenshotBtn">📸 Save Screenshot</button>
+  </div>
+  <div class="sidebar">
+    <div class="panel">
+      <div class="panel-title">🎯 Quiz Mode</div>
+      <div class="quiz-target">
+        <div class="q-label">Perform this mudra:</div>
+        <div class="q-mudra" id="quizMudra">—</div>
+        <div class="q-meaning" id="quizMeaning">Start camera to begin quiz</div>
+      </div>
+      <div class="quiz-result" id="quizResult"></div>
+      <button id="nextBtn">Next Mudra →</button>
+    </div>
+    <div class="panel">
+      <div class="panel-title">⏱ Recent History</div>
+      <div class="history-list" id="historyList">
+        <div style="font-size:0.8rem;opacity:0.5;text-align:center;padding:0.5rem">No detections yet</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">🪷 All 28 Mudras — click to learn</div>
+      <div class="mudra-list" id="mudraList"></div>
+      <div class="mudra-desc-box" id="mudraDescBox">
+        <div class="desc-name" id="descName"></div>
+        <div class="desc-meaning" id="descMeaning"></div>
+        <div class="desc-text" id="descText"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<footer>Built with MediaPipe Hands • Kuchipudi Mudra Recognition • 28 Asamyuta Hastas</footer>
+<script>
+// ── MUDRA DATABASE (descriptions match the image exactly) ──────────
+const MUDRAS = [
+  { name:"Pataka",       meaning:"🚩 Flag",               sanskrit:"पताका",
+    description:"All four fingers fully extended and joined together. Thumb bent and tucked against the palm. Hand is flat like a flag. Used to depict clouds, forest, river, or the start of a dance." },
+  { name:"Tripataka",    meaning:"3️⃣ Three-part Flag",    sanskrit:"त्रिपताका",
+    description:"Index, middle, and ring fingers extended and joined. Little finger bent down. Thumb bent inward. Used to represent a crown, tree, or lighting a lamp." },
+  { name:"Ardhapataka",  meaning:"🏳️ Half Flag",          sanskrit:"अर्धपताका",
+    description:"Index and middle fingers extended and held together. Ring and little fingers bent down. Thumb slightly bent. Used to show a knife, leaf, or two people side by side." },
+  { name:"Kartarimukha", meaning:"✂️ Scissors",           sanskrit:"कर्तरीमुख",
+    description:"Index and middle fingers extended and spread apart in a V-shape like scissors. Ring and little fingers curled into the palm, held by the thumb. Used to show separation or a deer's eye." },
+  { name:"Mayura",       meaning:"🦚 Peacock",            sanskrit:"मयूर",
+    description:"Thumb tip touches the ring finger tip. Index, middle, and little fingers remain extended and slightly curved. Represents a peacock's beak, applying tilak, or wiping tears." },
+  { name:"Ardhachandra", meaning:"🌙 Half Moon",          sanskrit:"अर्धचन्द्र",
+    description:"All four fingers extended and joined together. Thumb stretched wide outward away from palm forming a crescent shape. Used to show the moon, a spear, or salutation." },
+  { name:"Araala",       meaning:"💨 Bent",               sanskrit:"अराल",
+    description:"Index finger bent/curved backward at middle joint. Middle, ring, and little fingers fully extended together. Thumb slightly bent. Used to show drinking nectar or the blowing wind." },
+  { name:"Shukatunda",   meaning:"🦜 Parrot Beak",        sanskrit:"शुकतुण्ड",
+    description:"Middle and little fingers extended. Index and ring fingers bent toward the palm. Thumb supports the bent index finger. Used to show shooting an arrow." },
+  { name:"Mushti",       meaning:"✊ Fist",               sanskrit:"मुष्टि",
+    description:"All four fingers tightly folded into a closed fist. Thumb rests across the outside of the folded fingers. Represents strength, holding something, or fighting." },
+  { name:"Sikhara",      meaning:"👍 Peak/Tower",       sanskrit:"शिखर",
+    description:"All four fingers folded into a fist. Thumb extended straight upward. Like a thumbs-up gesture. Used to show a pillar, a bow, love, or Lord Shiva." },
+  { name:"Kapittha",     meaning:"🍎 Wood Apple",         sanskrit:"कपित्थ",
+    description:"All fingers folded into a fist. Thumb presses against the nail of the bent index finger from outside. Used for Goddess Lakshmi, holding cymbals, or milking a cow." },
+  { name:"Katakamukha",  meaning:"🔗 Chain Link",         sanskrit:"कटकामुख",
+    description:"Thumb, index, and middle fingertips touch each other forming a circle. Ring and little fingers extended and relaxed. Used to show picking flowers or wearing a garland." },
+  { name:"Soochi",       meaning:"🪡 Needle",             sanskrit:"सूची",
+    description:"Index finger fully extended and pointing straight up. All remaining fingers folded into the palm with the thumb securing them. Represents the number one, the universe, or pointing to the sky." },
+  { name:"Chandrakala",  meaning:"🌛 Moon Digit",         sanskrit:"चन्द्रकला",
+    description:"Index finger and thumb both extended upward. Middle, ring, and little fingers remain folded. Like Sikhara but with index finger also raised. Represents the crescent moon." },
+  { name:"Padmakesha",   meaning:"🪷 Lotus Bud",          sanskrit:"पद्मकोश",
+    description:"All five fingers curved equally inward forming a half-open flower bud shape. Fingertips separated and not touching. Used to show a lotus, a ball, or an offering to God." },
+  { name:"Sarpasirsha",  meaning:"🐍 Snake Head",         sanskrit:"सर्पशीर्ष",
+    description:"All four fingers held together and bent forward at the knuckles, drooping downward. Thumb also curves alongside. The whole hand mimics a cobra's flat hood. Used to represent a snake or water." },
+  { name:"Mrigasirsha",  meaning:"🦌 Deer Head",          sanskrit:"मृगशीर्ष",
+    description:"Little finger and thumb extended outward. Index finger points forward slightly. Middle and ring fingers bent down toward the palm. Resembles a deer's face with two small horns." },
+  { name:"Simhamukha",   meaning:"🦁 Lion Face",          sanskrit:"सिंहमुख",
+    description:"Thumb, index, and little finger all extended outward. Middle and ring fingers bent toward the palm. Resembles the wide open face of a roaring lion." },
+  { name:"Kangoola",     meaning:"🔔 Bell",               sanskrit:"कङ्गुल",
+    description:"Ring finger bent toward the palm. Index, middle, little fingers, and thumb all extended outward. Represents a hanging bell or a mango fruit on a tree." },
+  { name:"Alapadma",     meaning:"🌸 Full Bloomed Lotus", sanskrit:"अलपद्म",
+    description:"All five fingers fully spread wide apart and extended outward. Each finger slightly curved backward. Resembles a fully bloomed open lotus. Used to show wonder or the moon." },
+  { name:"Chatura",      meaning:"🧠 Clever/Four",      sanskrit:"चतुर",
+    description:"Ring finger bent toward the palm. Thumb brought to touch the base/side of the ring finger. Index, middle, and little fingers remain extended. Used to show the number four or cleverness." },
+  { name:"Bramara",      meaning:"🐝 Bee",                sanskrit:"भ्रमर",
+    description:"Index finger curved and bent toward the thumb. Thumb tip and middle fingertip touch each other. Ring and little fingers extended. Represents a bee flying around a flower." },
+  { name:"Hamsasya",     meaning:"🦢 Swan Beak",          sanskrit:"हंसास्य",
+    description:"Thumb tip and index fingertip touch lightly. Middle, ring, and little fingers extended and held together. Resembles the delicate slender beak of a swan." },
+  { name:"Hamsapaksha",  meaning:"🕊️ Swan Wing",          sanskrit:"हंसपक्ष",
+    description:"All fingers extended and held together. Little finger slightly bent inward. Thumb separated and extended away from the palm. Represents the graceful wing of a swan in flight." },
+  { name:"Sandaamsha",   meaning:"🦀 Tongs",              sanskrit:"सन्दंश",
+    description:"All five fingertips brought close together pointing at one point, then slightly separated creating a claw-like pinching shape. Used to show holding something very small or delicate." },
+  { name:"Mukula",       meaning:"🌺 Flower Bud",         sanskrit:"मुकुल",
+    description:"Tips of all five fingers meet at a single point while fingers are gently curved inward. Looks like a completely closed flower bud. Used to show eating food or an unopened lotus." },
+  { name:"Taamrachuda",  meaning:"🐓 Rooster",            sanskrit:"ताम्रचूड",
+    description:"Index finger bent and resting over the tip of the thumb. Middle, ring, and little fingers fully extended and held together. Represents the proud crest of a rooster." },
+  { name:"Trishoola",    meaning:"🔱 Trident",            sanskrit:"त्रिशूल",
+    description:"Index, middle, and ring fingers extended upward and slightly spread. Little finger and thumb folded inward. Directly represents the three-pronged trident of Lord Shiva." },
+];
+
+// ── STATE ──────────────────────────────────────────────────────────
+let totalDetected=0, quizScore=0;
+let detectedSet=new Set(), history=[];
+let currentMudra=null, quizTarget=null, quizWaiting=true;
+let lastMudra=null, stableCount=0;
+const STABLE = 12;
+
+// ── LANDMARK INDICES ───────────────────────────────────────────────
+const W=0,
+  T_MCP=2,T_IP=3,T_TIP=4,
+  I_MCP=5,I_PIP=6,I_DIP=7,I_TIP=8,
+  M_MCP=9,M_PIP=10,M_DIP=11,M_TIP=12,
+  R_MCP=13,R_PIP=14,R_DIP=15,R_TIP=16,
+  P_MCP=17,P_PIP=18,P_DIP=19,P_TIP=20;
+
+// ── HELPERS ────────────────────────────────────────────────────────
+// Finger extended: tip is above pip, pip above mcp (y axis inverted)
+function up(lm,tip,pip,mcp){ return lm[tip].y < lm[pip].y && lm[pip].y < lm[mcp].y; }
+// Finger curled: tip is below mcp
+function down(lm,tip,mcp){ return lm[tip].y > lm[mcp].y; }
+// Thumb out: tip far from index mcp horizontally
+function tOut(lm){ return Math.abs(lm[T_TIP].x - lm[I_MCP].x) > 0.08; }
+// Thumb up: tip is higher than T_MCP
+function tUp(lm){ return lm[T_TIP].y < lm[T_MCP].y - 0.04; }
+// Distance between two landmarks
+function d(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+// Finger tip bent forward (drooping): tip lower than dip
+function droop(lm,tip,dip){ return lm[tip].y > lm[dip].y; }
+
+// ── MAIN DETECTION ─────────────────────────────────────────────────
+function detectMudra(lm) {
+
+  // ── Finger extended: tip above pip (relaxed threshold for flat hand gestures)
+  const iUp = lm[I_TIP].y < lm[I_PIP].y - 0.01;
+  const mUp = lm[M_TIP].y < lm[M_PIP].y - 0.01;
+  const rUp = lm[R_TIP].y < lm[R_PIP].y - 0.01;
+  const pUp = lm[P_TIP].y < lm[P_PIP].y - 0.01;
+
+  // ── Finger curled: tip below pip joint
+  const iDn = lm[I_TIP].y > lm[I_PIP].y + 0.02;
+  const mDn = lm[M_TIP].y > lm[M_PIP].y + 0.02;
+  const rDn = lm[R_TIP].y > lm[R_PIP].y + 0.02;
+  const pDn = lm[P_TIP].y > lm[P_PIP].y + 0.02;
+
+  // ── Thumb states
+  const thumbUp  = lm[T_TIP].y < lm[T_MCP].y - 0.04;
+  const thumbOut = Math.abs(lm[T_TIP].x - lm[I_MCP].x) > 0.08;
+  const thumbIn  = !thumbOut && !thumbUp;
+
+  // ── Distances between fingertips
+  const ti = d(lm[T_TIP], lm[I_TIP]);
+  const tm = d(lm[T_TIP], lm[M_TIP]);
+  const tr = d(lm[T_TIP], lm[R_TIP]);
+  const im = d(lm[I_TIP], lm[M_TIP]);
+  const mr = d(lm[M_TIP], lm[R_TIP]);
+  const rp = d(lm[R_TIP], lm[P_TIP]);
+
+  // ── V spread between index and middle (Kartarimukha)
+  const vSpread = Math.abs(lm[I_TIP].x - lm[M_TIP].x) > 0.07;
+
+  // ── Wide spread across all fingers (Alapadma)
+  const wideSpread = Math.abs(lm[I_TIP].x - lm[P_TIP].x) > 0.16;
+
+  // ── Thumb wide out (Ardhachandra)
+  const thumbWide = Math.abs(lm[T_TIP].x - lm[I_MCP].x) > 0.11;
+
+  // ── All 5 tips close together
+  const allTips = ti<0.08 && im<0.06 && mr<0.06 && rp<0.06;
+
+  // ── Mukula: all tips at one point, fingers curled
+  const mukulaShape = allTips && iDn && mDn && rDn && pDn;
+
+  // ── Sandaamsha: tips close, fingers not fully extended or curled (claw)
+  const sandaamsha = allTips && !iUp && !mUp && !rUp && !pUp && !iDn && !mDn;
+
+  // ── Sarpasirsha: all tips drooping below DIP
+  const allDroop = lm[I_TIP].y > lm[I_DIP].y && lm[M_TIP].y > lm[M_DIP].y
+                && lm[R_TIP].y > lm[R_DIP].y && lm[P_TIP].y > lm[P_DIP].y;
+
+  // ── Padmakesha: all fingers half-curved (tip between pip and mcp)
+  const iHalf = lm[I_TIP].y < lm[I_MCP].y && lm[I_TIP].y > lm[I_PIP].y;
+  const mHalf = lm[M_TIP].y < lm[M_MCP].y && lm[M_TIP].y > lm[M_PIP].y;
+  const rHalf = lm[R_TIP].y < lm[R_MCP].y && lm[R_TIP].y > lm[R_PIP].y;
+  const pHalf = lm[P_TIP].y < lm[P_MCP].y && lm[P_TIP].y > lm[P_PIP].y;
+  const allHalf = iHalf && mHalf && rHalf && pHalf;
+
+  // ── Araala: index pip is lower than mcp (bent) but tip is above mcp
+  const iAraala = lm[I_PIP].y > lm[I_MCP].y + 0.01 && lm[I_TIP].y < lm[I_MCP].y;
+
+  // ── Hamsapaksha: pinky between pip and mcp (slightly bent)
+  const pHalfBent = lm[P_TIP].y > lm[P_PIP].y && lm[P_TIP].y < lm[P_MCP].y;
+
+  // ── Taamrachuda: index tip near thumb tip and index is curled
+  const iNearThumb = ti < 0.08 && lm[I_TIP].y > lm[I_PIP].y;
+
+  // ══════════════════════════════════════════════════════════════════
+  // DETECTION — most specific first, never break working mudras
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── 26. Mukula: all 5 tips meet, all fingers curled
+  if (mukulaShape) return "Mukula";
+
+  // ── 25. Sandaamsha: claw pinch shape
+  if (sandaamsha) return "Sandaamsha";
+
+  // ── 16. Sarpasirsha: all fingertips drooping forward like snake hood
+  if (allDroop && !iDn && !mDn) return "Sarpasirsha";
+
+  // ── 15. Padmakesha: all fingers half curved, tips spread (lotus bud)
+  if (allHalf && im > 0.03 && rp > 0.02 && !allTips) return "Padmakesha";
+
+  // ── 9. Mushti: all 4 fingers fully curled, thumb over fist
+  if (iDn && mDn && rDn && pDn && thumbIn) return "Mushti";
+
+  // ── 10. Sikhara: full fist + thumb pointing UP
+  if (iDn && mDn && rDn && pDn && thumbUp) return "Sikhara";
+
+  // ── 11. Kapittha: full fist + thumb tip touching index DIP/PIP
+  const thumbOnIndex = d(lm[T_TIP], lm[I_DIP]) < 0.07;
+  if (iDn && mDn && rDn && pDn && thumbOnIndex) return "Kapittha";
+
+  // ── 20. Alapadma: all 5 wide spread + extended
+  if (iUp && mUp && rUp && pUp && thumbOut && wideSpread) return "Alapadma";
+
+  // ── 6. Ardhachandra: all 4 fingers up + thumb stretched very wide
+  if (iUp && mUp && rUp && pUp && thumbWide) return "Ardhachandra";
+
+  // ── 1. Pataka: ALL 4 fingers straight up, thumb bent close to palm (not spread out)
+  // Thumb tip should be close to index MCP (bent inward)
+  const thumbBentIn = lm[T_TIP].x > lm[I_MCP].x - 0.05 && !thumbUp;
+  if (iUp && mUp && rUp && pUp && thumbBentIn) return "Pataka";
+
+  // ── 2. Tripataka: index+middle+ring straight up, pinky bent down, thumb bent
+  if (iUp && mUp && rUp && pDn && !thumbUp) return "Tripataka";
+
+  // ── 28. Trishoola: index+middle+ring spread up, pinky+thumb folded
+  const imrSpread = Math.abs(lm[I_TIP].x - lm[R_TIP].x) > 0.09;
+  if (iUp && mUp && rUp && pDn && imrSpread) return "Trishoola";
+
+  // ── 4. Kartarimukha: index+middle V shape, ring+pinky curled
+  if (iUp && mUp && rDn && pDn && vSpread) return "Kartarimukha";
+
+  // ── 3. Ardhapataka: index+middle up together, ring+pinky curled
+  if (iUp && mUp && rDn && pDn && !vSpread) return "Ardhapataka";
+
+  // ── 14. Chandrakala: index + thumb up, rest curled
+  if (iUp && !mUp && !rUp && !pUp && thumbUp) return "Chandrakala";
+
+  // ── 13. Soochi: only index up, all others curled, thumb in
+  if (iUp && mDn && rDn && pDn && thumbIn) return "Soochi";
+
+  // ── 5. Mayura: thumb touches ring tip, index+middle+pinky up
+  if (tr < 0.07 && iUp && mUp && pUp && !rUp) return "Mayura";
+
+  // ── 23. Hamsasya: thumb touches index tip, middle+ring+pinky up
+  if (ti < 0.06 && mUp && rUp && pUp) return "Hamsasya";
+
+  // ── 12. Katakamukha: thumb+index+middle touch, ring+pinky up
+  if (ti < 0.07 && tm < 0.07 && rUp && pUp) return "Katakamukha";
+
+  // ── 18. Simhamukha: thumb+index+pinky up, middle+ring curled
+  if (thumbOut && iUp && mDn && rDn && pUp) return "Simhamukha";
+
+  // ── 17. Mrigasirsha: thumb+pinky out, middle+ring curled, index not up
+  if (thumbOut && !iUp && mDn && rDn && pUp) return "Mrigasirsha";
+
+  // ── 22. Bramara: index near thumb (curled), thumb+middle touch, ring+pinky up
+  if (iNearThumb && tm < 0.08 && rUp && pUp) return "Bramara";
+
+  // ── 27. Taamrachuda: index bent over thumb, middle+ring+pinky up
+  if (iNearThumb && mUp && rUp && pUp) return "Taamrachuda";
+
+  // ── 8. Shukatunda: middle+pinky up, index+ring curled
+  if (!iUp && mUp && !rUp && pUp && iDn && rDn) return "Shukatunda";
+
+  // ── 7. Araala: index half bent (pip below mcp) + thumb half bent + middle+ring+pinky straight
+  const iHalfBent = lm[I_PIP].y > lm[I_MCP].y && lm[I_TIP].y < lm[I_MCP].y;
+  const thumbHalfOut = Math.abs(lm[T_TIP].x - lm[I_MCP].x) > 0.04 && Math.abs(lm[T_TIP].x - lm[I_MCP].x) < 0.10;
+  if (iHalfBent && thumbHalfOut && mUp && rUp && pUp) return "Araala";
+
+  // ── 19. Kangoola: ring curled, index+middle+pinky up, thumb out
+  if (iUp && mUp && rDn && pUp && thumbOut) return "Kangoola";
+
+  // ── 21. Chatura: thumb placed across/on index+middle+ring fingers, pinky extended out
+  const thumbAcrossFingers = d(lm[T_TIP], lm[M_PIP]) < 0.08 || d(lm[T_TIP], lm[R_PIP]) < 0.08;
+  if (thumbAcrossFingers && pUp && iDn && mDn && rDn) return "Chatura";
+
+  // ── 24. Hamsapaksha: index+middle+ring up, pinky half bent, thumb out
+  if (iUp && mUp && rUp && pHalfBent && thumbOut) return "Hamsapaksha";
+
+  return null;
+}
+
+// ── BUILD GALLERY ──────────────────────────────────────────────────
+const mudraListEl = document.getElementById('mudraList');
+MUDRAS.forEach(m => {
+  const div = document.createElement('div');
+  div.className = 'mudra-item';
+  div.id = 'item-' + m.name;
+  div.innerHTML = `<div class="mudra-dot"></div><div class="mudra-item-name">${m.name}</div><div class="mudra-item-meaning">${m.meaning}</div>`;
+  div.addEventListener('click', () => {
+    document.getElementById('descName').textContent    = m.name + ' (' + m.sanskrit + ')';
+    document.getElementById('descMeaning').textContent = '"' + m.meaning + '"';
+    document.getElementById('descText').textContent    = m.description;
+    document.getElementById('mudraDescBox').style.display = 'block';
+    div.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  });
+  mudraListEl.appendChild(div);
+});
+
+// ── QUIZ ───────────────────────────────────────────────────────────
+function pickQuiz() {
+  const r = MUDRAS[Math.floor(Math.random()*MUDRAS.length)];
+  quizTarget=r; quizWaiting=true;
+  document.getElementById('quizMudra').textContent   = r.name;
+  document.getElementById('quizMeaning').textContent = r.meaning;
+  document.getElementById('quizResult').textContent  = '';
+}
+pickQuiz();
+document.getElementById('nextBtn').addEventListener('click', pickQuiz);
+
+// ── UPDATE UI ──────────────────────────────────────────────────────
+function updateUI(name, conf) {
+  const nameEl    = document.getElementById('mudraName');
+  const meaningEl = document.getElementById('mudraMeaning');
+  const barEl     = document.getElementById('confidenceBar');
+  const descOv    = document.getElementById('mudraDescOverlay');
+
+  if (name) {
+    const m = MUDRAS.find(x=>x.name===name);
+    nameEl.textContent    = name + ' (' + m.sanskrit + ')';
+    meaningEl.textContent = m.meaning;
+    descOv.textContent    = m.description;
+    descOv.style.display  = 'block';
+    barEl.style.width     = (conf*100)+'%';
+    nameEl.classList.remove('detected-flash');
+    void nameEl.offsetWidth;
+    nameEl.classList.add('detected-flash');
+
+    document.querySelectorAll('.mudra-item').forEach(el=>el.classList.remove('detected'));
+    const item = document.getElementById('item-'+name);
+    if(item) item.classList.add('detected');
+
+    if(!detectedSet.has(name)){ detectedSet.add(name); document.getElementById('uniqueCount').textContent=detectedSet.size; }
+    totalDetected++;
+    document.getElementById('totalDetected').textContent=totalDetected;
+
+    const t=new Date();
+    history.unshift({name, time:t.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})});
+    if(history.length>10) history.pop();
+    renderHistory();
+
+    if(quizTarget && quizWaiting && name===quizTarget.name){
+      quizWaiting=false; quizScore++;
+      document.getElementById('quizScore').textContent=quizScore;
+      document.getElementById('quizResult').textContent='✅ Correct!';
+      setTimeout(pickQuiz,1500);
+    }
+    if('speechSynthesis' in window){
+      const u=new SpeechSynthesisUtterance(name); u.rate=0.9; u.volume=0.7;
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+    }
+  } else {
+    nameEl.textContent='No mudra detected';
+    meaningEl.textContent='Align your hand clearly in frame';
+    descOv.style.display='none';
+    barEl.style.width='0%';
+    document.querySelectorAll('.mudra-item').forEach(el=>el.classList.remove('detected'));
+  }
+}
+
+function renderHistory(){
+  const el=document.getElementById('historyList');
+  if(!history.length){ el.innerHTML='<div style="font-size:0.8rem;opacity:0.5;text-align:center;padding:0.5rem">No detections yet</div>'; return; }
+  el.innerHTML=history.map(h=>`<div class="history-item"><span>${h.name}</span><span>${h.time}</span></div>`).join('');
+}
+
+// ── SCREENSHOT ─────────────────────────────────────────────────────
+document.getElementById('screenshotBtn').addEventListener('click',()=>{
+  const v=document.getElementById('videoElement');
+  const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
+  const x=c.getContext('2d');
+  x.save(); x.scale(-1,1); x.drawImage(v,-c.width,0); x.restore();
+  if(currentMudra){
+    x.fillStyle='rgba(0,0,0,0.6)'; x.fillRect(0,c.height-60,c.width,60);
+    x.fillStyle='#f0d080'; x.font='bold 28px serif'; x.textAlign='center';
+    x.fillText(currentMudra,c.width/2,c.height-20);
+  }
+  const a=document.createElement('a');
+  a.download='mudra-'+(currentMudra||'capture')+'-'+Date.now()+'.png';
+  a.href=c.toDataURL(); a.click();
+});
+
+// ── MEDIAPIPE ──────────────────────────────────────────────────────
+document.getElementById('startBtn').addEventListener('click',async()=>{
+  const btn=document.getElementById('startBtn');
+  btn.disabled=true; btn.textContent='⏳ Starting...';
+  document.getElementById('statusMsg').textContent='Requesting camera access...';
+
+  const videoEl=document.getElementById('videoElement');
+  const canvasEl=document.getElementById('outputCanvas');
+  const ctx=canvasEl.getContext('2d');
+
+  const hands=new Hands({locateFile:f=>'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'+f});
+  hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.75,minTrackingConfidence:0.6});
+
+  hands.onResults(results=>{
+    canvasEl.width=videoEl.videoWidth; canvasEl.height=videoEl.videoHeight;
+    ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+      const lm=results.multiHandLandmarks[0];
+      drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'rgba(201,168,76,0.6)',lineWidth:2});
+      drawLandmarks(ctx,lm,{color:'#f0d080',lineWidth:1,radius:3});
+      const detected=detectMudra(lm);
+      if(detected===lastMudra){ stableCount++; } else { stableCount=0; lastMudra=detected; }
+      if(stableCount>=STABLE && detected!==currentMudra){ currentMudra=detected; updateUI(detected,0.9); }
+    } else {
+      currentMudra=null; lastMudra=null; stableCount=0; updateUI(null,0);
+    }
+  });
+
+  try {
+    const camera=new Camera(videoEl,{
+      onFrame:async()=>{ await hands.send({image:videoEl}); },
+      width:640,height:480,
+    });
+    await camera.start();
+    btn.textContent='🟢 Camera Active';
+    document.getElementById('statusMsg').textContent='Show your hand clearly to the camera!';
+  } catch(e){
+    btn.disabled=false; btn.textContent='▶ Start Camera';
+    document.getElementById('statusMsg').textContent='❌ Camera access denied. Please allow camera.';
+  }
+});
+</script>
+</body>
+</html>
